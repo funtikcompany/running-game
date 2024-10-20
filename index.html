@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Running Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        @keyframes swipe {
+            0% { transform: translateX(-20px); }
+            50% { transform: translateX(20px); }
+            100% { transform: translateX(-20px); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Туторіал перед початком гри -->
+    <div id="tutorial" style="position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; flex-direction:column; color:#fff; z-index:10;">
+        <div style="animation: swipe 1s infinite;">👆</div>
+        <div>SWIPE TO MOVE</div>
+    </div>
+
+    <!-- Підключення бібліотек -->
+<!-- Підключення бібліотек -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.124.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.124.0/examples/js/loaders/GLTFLoader.js"></script>
+
+
+    <!-- Основний скрипт -->
+    <script>
+        // Створення сцени
+        const scene = new THREE.Scene();
+
+        // Створення камери
+        const camera = new THREE.PerspectiveCamera(100, window.innerWidth/window.innerHeight, 0.2, 1000);
+        camera.position.z = 20;
+        camera.position.y = 2;
+
+        // Створення рендерера
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Додавання освітлення
+        const ambientLight = new THREE.AmbientLight(0x85d3fb, 0.5);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0x85d3fb, 0.5);
+        directionalLight.position.set(0, 5, 5);
+        scene.add(directionalLight);
+
+
+        // Завантаження моделі персонажа
+        let player; // Змінна для зберігання моделі персонажа
+        let mixer; // Змінна для AnimationMixer
+        let clock = new THREE.Clock(); // Годинник для відстеження часу в анімації
+        let runAction; // Анімації стрибка та бігу
+        const loader = new THREE.GLTFLoader();
+        loader.load(
+            'Stickman.glb', // Переконайтеся, що файл знаходиться в тій самій директорії
+            function (gltf) {
+                player = gltf.scene;
+                player.scale.set(.8, .8, .8); // Масштабування моделі при необхідності
+                player.position.y = 0; // Встановлення початкової позиції по осі Y
+                player.rotation.y = Math.PI; // Повертаємо модель, якщо вона дивиться в неправильний бік
+                scene.add(player);
+
+                // Ініціалізація AnimationMixer
+                mixer = new THREE.AnimationMixer(player);
+
+                // Додаємо анімації з моделі
+                const animations = gltf.animations;
+                console.log('Доступні анімації:', animations);
+
+                animations.forEach((clip, index) => {
+                    console.log(`Анімація ${index}:`, clip.name);
+                });
+
+                // Пошук анімацій за іменами
+                // const jumpClip = THREE.AnimationClip.findByName(animations, 'Victory');
+                const runClip = THREE.AnimationClip.findByName(animations, 'Run');
+
+                if (runClip) {
+                    // jumpAction = mixer.clipAction(jumpClip);
+                    runAction = mixer.clipAction(runClip);
+
+                    // Налаштування для коректного переходу між анімаціями
+                    runAction.enabled = true; // Спочатку вимикаємо біг
+                    runAction.setLoop(THREE.LoopRepeat); // Зробимо біг повторюваним
+
+                    // jumpAction.clampWhenFinished = true; // Зупиняємо анімацію після завершення
+                    // jumpAction.loop = THREE.LoopOnce; // Стрибок виконується один раз
+
+                    // Починаємо зі стрибка
+                    // jumpAction.play();
+                    runAction.play();
+                    mixer.addEventListener('finished', (event) => {
+                        if (event.action === jumpAction) {
+                            // Після завершення стрибка включаємо біг
+                            runAction.enabled = true;
+                        
+                        }
+                    });
+                } else {
+                    console.error('Не вдалося знайти необхідні анімації.');
+                }
+            },
+            undefined,
+            function (error) {
+                console.error('Помилка при завантаженні моделі:', error);
+            }
+        );
+
+                // Створення треку
+    // Створення треку
+            let track; // Змінна для зберігання моделі треку
+            const trackLoader = new THREE.GLTFLoader();
+            let trackLength;
+            const tracks = [];
+
+// Load the track model
+    trackLoader.load(
+        'TrackFloor.glb',
+        function (gltf) {
+            track = gltf.scene;
+            track.scale.set(2, 10, 10);
+            track.position.set(0, 0, 0);
+            track.rotation.set(0, 0, 0);
+
+            // Compute the length of the track model
+            const bbox = new THREE.Box3().setFromObject(track);
+            trackLength = bbox.max.z - bbox.min.z;
+
+            // Change material for visibility testing
+            track.traverse((child) => {
+                if (child.isMesh) {
+                    child.material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+                }
+            });
+
+            // Add the initial track to the scene
+            scene.add(track);
+            tracks.push(track); // Add to the tracks array
+
+            // Create initial additional tracks to cover initial distance
+            createAdditionalTrack();
+            createAdditionalTrack();
+            createAdditionalTrack();
+
+            console.log('Track loaded successfully:', track);
+        },
+        undefined,
+        function (error) {
+            console.error('Error loading the track model:', error);
+        }
+    );
+
+// Function to create and position additional tracks
+function createAdditionalTrack() {
+    const lastTrack = tracks[tracks.length - 1]; // Get the last track added
+    const clonedTrack = lastTrack.clone();
+    clonedTrack.position.set(
+        lastTrack.position.x,
+        lastTrack.position.y,
+        lastTrack.position.z - trackLength
+    );
+    scene.add(clonedTrack);
+    tracks.push(clonedTrack);
+}
+
+// Function to update track positions based on player's position
+function updateTrackPosition(playerPositionZ) {
+    const lastTrack = tracks[tracks.length - 1];
+
+    // If the player is within half the track length from the last track, add a new one
+    if (playerPositionZ - lastTrack.position.z < trackLength / 2) {
+        createAdditionalTrack();
+    }
+
+    // Optional: Remove tracks that are far behind the player to save memory
+    if (tracks.length > 5) {
+        const firstTrack = tracks[0];
+        if (playerPositionZ - firstTrack.position.z > trackLength * 2) {
+            scene.remove(firstTrack);
+            tracks.shift();
+        }
+    }
+}
+
+// In your animate function, make sure to call updateTrackPosition
+function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+    if (mixer) mixer.update(delta);
+
+    if (player) {
+        // Move the player forward
+        player.position.z -= speed;
+        camera.position.z = player.position.z + 5;
+        camera.position.x = player.position.x;
+
+        // Update track positions
+        updateTrackPosition(player.position.z);
+
+        // ... rest of your code ...
+    }
+
+    renderer.render(scene, camera);
+}
+    const brains = [];
+
+    const brainLoader = new THREE.GLTFLoader();
+    const brainColors = [0xffa500, 0x0000ff, 0x800080];
+    const lanes = [-3, 0, 3]; // Три ряди по осі X
+
+    function createBrain(xPosition, zPosition, color) {
+        brainLoader.load(
+            'Brain.glb',
+            function (gltf) {
+                const brain = gltf.scene;
+                brain.scale.set(2, 2, 2);
+                brain.position.set(xPosition, 0.5, zPosition);
+
+                // Зберігаємо колір у userData
+                brain.userData.color = new THREE.Color(color);
+
+                brain.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material.color.set(color);
+                    }
+                });
+                scene.add(brain);
+                brains.push(brain);
+            },
+            undefined,
+            function (error) {
+                console.error('Помилка при завантаженні моделі мозку:', error);
+            }
+        );
+    }
+
+
+        function createBrainsSequence(zPosition) {
+            // Випадково вибираємо рядок (доріжку)
+            const laneIndex = Math.floor(Math.random() * lanes.length);
+            const xPosition = lanes[laneIndex];
+
+            // Випадково вибираємо кількість мізків у послідовності (від 2 до 5)
+            const brainCountInSequence = Math.floor(Math.random() * 2) + 1; // 2, 3, 4 або 5
+
+            // Випадково вибираємо колір для послідовності
+            const color = brainColors[Math.floor(Math.random() * brainColors.length)];
+
+            // Генеруємо послідовність мізків
+            for (let i = 0; i < brainCountInSequence; i++) {
+                const brainZPosition = zPosition - i * 7; // Відстань між мізками в послідовності
+
+                // Створюємо мізок
+                createBrain(xPosition, brainZPosition, color);
+            }
+        }
+
+        let speed = 0.2;
+
+        let brainCount = 0;
+
+// Функція для створення текстового спрайта
+function createTextSprite(message) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const context = canvas.getContext('2d');
+    context.font = 'Bold 80px Arial';
+    context.fillStyle = 'rgba(255,255,255,1.0)';
+    context.textAlign = 'center';
+    context.fillText(message, canvas.width / 2, canvas.height / 2 + 30);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(2, 1, 1);
+
+    // Зберігаємо канвас та контекст для подальшого оновлення
+    sprite.userData.canvas = canvas;
+    sprite.userData.context = context;
+
+    return sprite;
+}
+
+// Створення спрайта з початковим значенням 0
+const brainCountSprite = createTextSprite('0');
+scene.add(brainCountSprite);
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+    if (mixer) mixer.update(delta);
+
+    if (player) {
+        player.position.z -= speed;
+        camera.position.z = player.position.z + 5;
+        camera.position.x = player.position.x;
+
+        // Оновлення позиції спрайта над головою
+        brainCountSprite.position.set(player.position.x, player.position.y + 3, player.position.z);
+
+        if (Math.random() < 0.02) {
+            createBrainsSequence(player.position.z - 50);
+        }
+
+        for (let i = brains.length - 1; i >= 0; i--) {
+            const brain = brains[i];
+            if (brain.position.z > player.position.z) {
+                continue;
+            }
+            if (brain.position.distanceTo(player.position) < 1) {
+                // Зміна кольору персонажа
+                player.traverse(function(child) {
+                    if (child.isMesh) {
+                        let childMaterials = Array.isArray(child.material) ? child.material : [child.material];
+                        childMaterials.forEach(function(material) {
+                            if (material.color) {
+                                material.color.set(brain.userData.color);
+                            }
+                        });
+                    }
+                });
+
+                // Збільшення лічильника мізків
+                brainCount++;
+
+                // Оновлення тексту на спрайті
+                updateTextSprite(brainCountSprite, brainCount.toString());
+
+                // Видалення мізку
+                scene.remove(brain);
+                brains.splice(i, 1);
+            }
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+
+function updateTextSprite(sprite, message) {
+    const context = sprite.userData.context;
+    const canvas = sprite.userData.canvas;
+
+    // Очищення попереднього тексту
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Малюємо новий текст
+    context.fillText(message, canvas.width / 2, canvas.height / 2 + 30);
+
+    // Повідомляємо, що текстуру потрібно оновити
+    sprite.material.map.needsUpdate = true;
+}
+
+        // Управління персонажем через свайп
+        let isDragging = false;
+        let previousMousePosition = {
+            x: 0,
+            y: 0
+        };
+
+        function handleMove(deltaX) {
+            if (player) {
+                player.position.x += deltaX * 0.01;
+                // Обмеження руху персонажа по осі X
+                player.position.x = Math.max(Math.min(player.position.x, 4.5), -4.5);
+            }
+        }
+
+        // Для десктопів
+        document.addEventListener('mousedown', function(e) {
+            isDragging = true;
+            previousMousePosition.x = e.clientX;
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (isDragging) {
+                const deltaMove = {
+                    x: e.clientX - previousMousePosition.x
+                };
+                handleMove(deltaMove.x);
+                previousMousePosition.x = e.clientX;
+            }
+        });
+
+        document.addEventListener('mouseup', function(e) {
+            isDragging = false;
+        });
+
+        // Для мобільних пристроїв
+        document.addEventListener('touchstart', function(e) {
+            isDragging = true;
+            previousMousePosition.x = e.touches[0].clientX;
+        });
+
+        document.addEventListener('touchmove', function(e) {
+            if (isDragging) {
+                const deltaMove = {
+                    x: e.touches[0].clientX - previousMousePosition.x
+                };
+                handleMove(deltaMove.x);
+                previousMousePosition.x = e.touches[0].clientX;
+            }
+        });
+
+        document.addEventListener('touchend', function(e) {
+            isDragging = false;
+        });
+
+        // Туторіал перед початком гри
+        const tutorial = document.getElementById('tutorial');
+
+        tutorial.addEventListener('click', () => {
+            tutorial.style.display = 'none';
+            // Починаємо гру
+            animate();
+        });
+
+        // Обробка зміни розміру вікна
+        window.addEventListener('resize', function() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            renderer.setSize(width, height);
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+        });
+    </script>
+</body>
+</html>
